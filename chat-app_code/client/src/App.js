@@ -4,7 +4,7 @@ import {
   Paperclip, Mic, MicOff, File, Download, Phone, Video, MoreVertical,
   Check, CheckCheck, Users, Plus, Settings, Shield, Bell,
   Star, Forward, Reply, Copy, Trash2, UserPlus, Volume2,
-  VideoOff, PhoneOff, Monitor
+  VideoOff, PhoneOff, Monitor,BellOff
 } from 'lucide-react';
 import io from 'socket.io-client';
 
@@ -59,14 +59,13 @@ const ChatApp = () => {
   const [conversations, setConversations] = useState([]);
   const [isAITyping, setIsAITyping] = useState(false);
   const [aiConversationContext, setAiConversationContext] = useState([]);
-  
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const recordingInterval = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const socketRef = useRef(null);
-
+  const [inAppNotifications, setInAppNotifications] = useState([]);
   // 表情符号列表
   const emojis = [
     '😀', '😃', '😄', '😁', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😌',
@@ -80,31 +79,8 @@ const ChatApp = () => {
     '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕',
     '🎉', '🎊', '🎈', '🎁', '🎂', '🍰', '🍕', '🍔', '🍟', '🌭', '🍿', '🍜'
   ];
-
-  // 添加通知函数（在您的其他函数定义之后添加）
-const showNotification = (title, body, icon = null) => {
-  // 检查浏览器是否支持通知
-  if ('Notification' in window) {
-    // 如果尚未授权，请求权限
-    if (Notification.permission === 'granted') {
-      new Notification(title, {
-        body: body,
-        icon: icon || '/favicon.ico', // 使用您的应用图标
-        tag: 'wechat-message' // 防止重复通知
-      });
-    } else if (Notification.permission !== 'denied') {
-      Notification.requestPermission().then(permission => {
-        if (permission === 'granted') {
-          new Notification(title, {
-            body: body,
-            icon: icon || '/favicon.ico',
-            tag: 'wechat-message'
-          });
-        }
-      });
-    }
-  }
-};
+  
+  
 
   // 联系人和群组列表 - 整合真实对话数据
   const [chats, setChats] = useState([
@@ -152,6 +128,7 @@ const showNotification = (title, body, icon = null) => {
 
   // 播放提示音
   const playNotificationSound = () => {
+    if (!notifications) return;
     try {
       // 创建一个简单的提示音
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -173,6 +150,79 @@ const showNotification = (title, body, icon = null) => {
       console.error('播放提示音失败:', error);
     }
   };
+  const showInAppNotification = (title, body, type = 'info') => {
+  const id = Date.now();
+  const notification = { id, title, body, type };
+  
+  setInAppNotifications(prev => [...prev, notification]);
+  
+  // 3秒后自动移除
+  setTimeout(() => {
+    setInAppNotifications(prev => prev.filter(n => n.id !== id));
+  }, 3000);
+};
+
+const showNotification = (title, body, icon = null, onClick = null) => {
+  // 检查是否启用通知
+  if (!notifications) return;
+  
+  // 检查页面是否在后台
+  if (document.visibilityState === 'visible' && !document.hidden) {
+    // 页面在前台，只显示应用内通知
+    showInAppNotification(title, body, 'message');
+    return;
+  }
+  
+  // 检查浏览器是否支持通知
+  if ('Notification' in window) {
+    // 如果尚未授权，请求权限
+    if (Notification.permission === 'granted') {
+      const notification = new Notification(title, {
+        body: body,
+        icon: icon || '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: 'wechat-message',
+        requireInteraction: false,
+        silent: false
+      });
+      
+      // 点击通知时的处理
+      notification.onclick = function(event) {
+        event.preventDefault();
+        window.focus();
+        if (onClick) onClick();
+        notification.close();
+      };
+      
+      // 自动关闭通知
+      setTimeout(() => notification.close(), 5000);
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+          const notification = new Notification(title, {
+            body: body,
+            icon: icon || '/favicon.ico',
+            badge: '/favicon.ico',
+            tag: 'wechat-message',
+            requireInteraction: false,
+            silent: false
+          });
+          
+          // 点击通知时的处理
+          notification.onclick = function(event) {
+            event.preventDefault();
+            window.focus();
+            if (onClick) onClick();
+            notification.close();
+          };
+          
+          // 自动关闭通知
+          setTimeout(() => notification.close(), 5000);
+        }
+      });
+    }
+  }
+};
 
   // 更新页面标题显示未读数
   const updatePageTitle = () => {
@@ -240,6 +290,7 @@ const showNotification = (title, body, icon = null) => {
         console.log('收到新消息:', messageData);
         
         const senderId = messageData.senderId || messageData.sender?._id;
+        const senderName = messageData.sender?.username || '好友';
         
         // 更新消息列表
         setMessages(prev => {
@@ -281,6 +332,7 @@ const showNotification = (title, body, icon = null) => {
         updatePageTitle();
         
         // 播放提示音（如果不是当前聊天）
+        const isCurrentChat = selectedChat === senderId || selectedChat === messageData.senderId;
         if (selectedChat !== senderId && selectedChat !== messageData.senderId) {
           playNotificationSound();
           
@@ -289,7 +341,11 @@ const showNotification = (title, body, icon = null) => {
           showNotification(
             senderName,
             messageData.content,
-            messageData.sender?.avatar
+            messageData.sender?.avatar,
+            () => {
+        // 点击通知时切换到对应聊天
+        setSelectedChat(senderId);
+      }
           );
         }
       });
@@ -816,6 +872,729 @@ const showNotification = (title, body, icon = null) => {
     setShowMessageMenu(null);
   };
 
+  // 在 App.js 中添加以下状态和功能
+
+// 1. 添加通知设置状态
+const [notificationSettings, setNotificationSettings] = useState({
+  enabled: true,
+  sound: true,
+  desktop: true,
+  vibration: true,
+  showPreview: true,
+  quietHours: {
+    enabled: false,
+    start: '22:00',
+    end: '08:00'
+  }
+});
+
+// 2. 保存和加载通知设置
+useEffect(() => {
+  // 从 localStorage 加载设置
+  const savedSettings = localStorage.getItem('notificationSettings');
+  if (savedSettings) {
+    setNotificationSettings(JSON.parse(savedSettings));
+  }
+}, []);
+
+// 保存设置
+const saveNotificationSettings = (newSettings) => {
+  setNotificationSettings(newSettings);
+  localStorage.setItem('notificationSettings', JSON.stringify(newSettings));
+};
+
+// 3. 检查是否在免打扰时间
+const isInQuietHours = () => {
+  if (!notificationSettings.quietHours.enabled) return false;
+  
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+  
+  const [startHour, startMin] = notificationSettings.quietHours.start.split(':').map(Number);
+  const [endHour, endMin] = notificationSettings.quietHours.end.split(':').map(Number);
+  
+  const startTime = startHour * 60 + startMin;
+  const endTime = endHour * 60 + endMin;
+  
+  if (startTime <= endTime) {
+    return currentTime >= startTime && currentTime <= endTime;
+  } else {
+    return currentTime >= startTime || currentTime <= endTime;
+  }
+};
+
+// 1. 消息提醒统计和管理
+const [notificationStats, setNotificationStats] = useState({
+  totalUnread: 0,
+  chatUnread: {},
+  lastNotificationTime: null
+});
+
+// 2. 消息队列管理（防止通知轰炸）
+const notificationQueue = useRef([]);
+const isProcessingQueue = useRef(false);
+
+const processNotificationQueue = async () => {
+  if (isProcessingQueue.current || notificationQueue.current.length === 0) return;
+  
+  isProcessingQueue.current = true;
+  
+  while (notificationQueue.current.length > 0) {
+    const notification = notificationQueue.current.shift();
+    showEnhancedNotification(
+      notification.title,
+      notification.body,
+      notification.options
+    );
+    
+    // 延迟显示下一个通知，避免同时显示太多
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  
+  isProcessingQueue.current = false;
+};
+
+// 3. 添加到通知队列
+const queueNotification = (title, body, options = {}) => {
+  // 检查是否需要合并通知
+  const existingIndex = notificationQueue.current.findIndex(
+    n => n.options.chatId === options.chatId
+  );
+  
+  if (existingIndex !== -1 && options.chatId) {
+    // 合并同一聊天的多条消息
+    const existing = notificationQueue.current[existingIndex];
+    existing.body = `${existing.messageCount + 1}条新消息`;
+    existing.messageCount++;
+  } else {
+    notificationQueue.current.push({
+      title,
+      body,
+      options: { ...options, messageCount: 1 }
+    });
+  }
+  
+  processNotificationQueue();
+};
+
+// 4. 特定聊天的通知设置
+const [chatNotificationSettings, setChatNotificationSettings] = useState({});
+
+const toggleChatNotification = (chatId) => {
+  const newSettings = {
+    ...chatNotificationSettings,
+    [chatId]: !chatNotificationSettings[chatId]
+  };
+  setChatNotificationSettings(newSettings);
+  localStorage.setItem('chatNotificationSettings', JSON.stringify(newSettings));
+};
+
+// 5. 消息提醒的完整实现
+const handleMessageNotification = (messageData) => {
+  const senderId = messageData.senderId || messageData.sender?._id;
+  const senderName = messageData.sender?.username || '好友';
+  const isCurrentChat = selectedChat === senderId;
+  
+  // 检查该聊天是否已静音
+  if (chatNotificationSettings[senderId]) {
+    console.log(`聊天 ${senderId} 已静音`);
+    return;
+  }
+  
+  // 更新未读统计
+  if (!isCurrentChat) {
+    setNotificationStats(prev => ({
+      ...prev,
+      totalUnread: prev.totalUnread + 1,
+      chatUnread: {
+        ...prev.chatUnread,
+        [senderId]: (prev.chatUnread[senderId] || 0) + 1
+      },
+      lastNotificationTime: new Date()
+    }));
+  }
+  
+  // 根据消息类型定制通知
+  let notificationBody = messageData.content;
+  let notificationType = 'message';
+  
+  switch (messageData.type) {
+    case 'image':
+      notificationBody = '发送了一张图片 📷';
+      break;
+    case 'file':
+      notificationBody = `发送了文件：${messageData.fileName || '文件'}`;
+      break;
+    case 'voice':
+      notificationBody = '发送了一条语音消息 🎤';
+      break;
+    case 'video':
+      notificationBody = '发起了视频通话 📹';
+      notificationType = 'call';
+      break;
+  }
+  
+  // 添加到通知队列
+  if (!isCurrentChat) {
+    queueNotification(
+      senderName,
+      notificationBody,
+      {
+        icon: messageData.sender?.avatar,
+        type: notificationType,
+        chatId: senderId,
+        priority: messageData.type === 'video' ? 'high' : 'normal',
+        onClick: () => {
+          setSelectedChat(senderId);
+          // 清除该聊天的未读数
+          setNotificationStats(prev => ({
+            ...prev,
+            totalUnread: prev.totalUnread - (prev.chatUnread[senderId] || 0),
+            chatUnread: {
+              ...prev.chatUnread,
+              [senderId]: 0
+            }
+          }));
+        }
+      }
+    );
+  }
+};
+
+// 6. 扩展的应用内通知组件
+const EnhancedNotificationContainer = () => {
+  const [hoveredNotification, setHoveredNotification] = useState(null);
+  
+  return (
+    <div className="fixed top-4 right-4 z-50 space-y-2 max-w-sm">
+      {inAppNotifications.map((notification, index) => (
+        <div
+          key={notification.id}
+          className={`
+            bg-white rounded-lg shadow-lg overflow-hidden
+            transform transition-all duration-300 ease-out
+            ${hoveredNotification === notification.id ? 'scale-105' : ''}
+            animate-slideIn
+          `}
+          style={{
+            animationDelay: `${index * 100}ms`
+          }}
+          onMouseEnter={() => setHoveredNotification(notification.id)}
+          onMouseLeave={() => setHoveredNotification(null)}
+        >
+          {/* 通知类型指示条 */}
+          <div className={`h-1 ${
+            notification.type === 'message' ? 'bg-green-500' :
+            notification.type === 'call' ? 'bg-blue-500' :
+            notification.type === 'warning' ? 'bg-yellow-500' :
+            'bg-gray-500'
+          }`} />
+          
+          <div className="p-4">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                {notification.icon ? (
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                    {notification.icon}
+                  </div>
+                ) : (
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${
+                    notification.type === 'message' ? 'bg-green-500' :
+                    notification.type === 'call' ? 'bg-blue-500' :
+                    notification.type === 'warning' ? 'bg-yellow-500' :
+                    'bg-gray-500'
+                  }`}>
+                    {notification.type === 'message' && <MessageCircle className="w-6 h-6" />}
+                    {notification.type === 'call' && <Phone className="w-6 h-6" />}
+                    {notification.type === 'info' && <Bell className="w-6 h-6" />}
+                  </div>
+                )}
+              </div>
+              
+              <div className="ml-3 flex-1">
+                <p className="text-sm font-medium text-gray-900">
+                  {notification.title}
+                </p>
+                <p className="mt-1 text-sm text-gray-500">
+                  {notification.body}
+                </p>
+                {notification.actions && (
+                  <div className="mt-2 flex space-x-2">
+                    {notification.actions.map((action, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          action.handler();
+                          setInAppNotifications(prev => 
+                            prev.filter(n => n.id !== notification.id)
+                          );
+                        }}
+                        className={`text-sm px-3 py-1 rounded ${
+                          action.primary 
+                            ? 'bg-green-500 text-white hover:bg-green-600'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              <button
+                onClick={() => {
+                  setInAppNotifications(prev => 
+                    prev.filter(n => n.id !== notification.id)
+                  );
+                }}
+                className="ml-4 flex-shrink-0 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          
+          {/* 进度条（自动关闭） */}
+          <div className="h-1 bg-gray-200">
+            <div 
+              className="h-full bg-gray-400 transition-all duration-[3000ms] ease-linear"
+              style={{
+                width: hoveredNotification === notification.id ? '100%' : '0%',
+                transitionProperty: hoveredNotification === notification.id ? 'none' : 'width'
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// 7. 添加通知中心（查看所有通知历史）
+const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+const [notificationHistory, setNotificationHistory] = useState([]);
+
+const addToNotificationHistory = (notification) => {
+  const historyItem = {
+    ...notification,
+    timestamp: new Date(),
+    read: false
+  };
+  
+  setNotificationHistory(prev => [historyItem, ...prev].slice(0, 50)); // 最多保留50条
+  
+  // 保存到 localStorage
+  const history = JSON.parse(localStorage.getItem('notificationHistory') || '[]');
+  history.unshift(historyItem);
+  localStorage.setItem('notificationHistory', JSON.stringify(history.slice(0, 50)));
+};
+
+// 8. 通知中心UI
+const NotificationCenter = () => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="bg-white rounded-lg w-96 max-h-[600px] flex flex-col">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="text-lg font-semibold">通知中心</h3>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => {
+              setNotificationHistory(prev => prev.map(n => ({ ...n, read: true })));
+            }}
+            className="text-sm text-blue-500 hover:underline"
+          >
+            全部标记已读
+          </button>
+          <button
+            onClick={() => setShowNotificationCenter(false)}
+            className="p-1 hover:bg-gray-100 rounded"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto">
+        {notificationHistory.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            暂无通知
+          </div>
+        ) : (
+          <div className="divide-y">
+            {notificationHistory.map((item, index) => (
+              <div
+                key={index}
+                className={`p-4 hover:bg-gray-50 ${!item.read ? 'bg-blue-50' : ''}`}
+                onClick={() => {
+                  if (item.onClick) item.onClick();
+                  setNotificationHistory(prev => 
+                    prev.map((n, i) => i === index ? { ...n, read: true } : n)
+                  );
+                }}
+              >
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 mt-1">
+                    {item.type === 'message' && <MessageCircle className="w-5 h-5 text-green-500" />}
+                    {item.type === 'call' && <Phone className="w-5 h-5 text-blue-500" />}
+                    {item.type === 'info' && <Bell className="w-5 h-5 text-gray-500" />}
+                  </div>
+                  <div className="ml-3 flex-1">
+                    <p className="font-medium text-sm">{item.title}</p>
+                    <p className="text-sm text-gray-600 mt-1">{item.body}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {new Date(item.timestamp).toLocaleString('zh-CN')}
+                    </p>
+                  </div>
+                  {!item.read && (
+                    <div className="w-2 h-2 bg-blue-500 rounded-full ml-2" />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+// 9. 在聊天界面添加静音选项
+const ChatContextMenu = ({ chat, position, onClose }) => {
+  if (!position) return null;
+  
+  return (
+    <div 
+      className="fixed bg-white rounded-lg shadow-lg py-2 w-48 z-50"
+      style={{ top: position.y, left: position.x }}
+    >
+      <button
+        onClick={() => {
+          toggleChatNotification(chat.id);
+          onClose();
+        }}
+        className="flex items-center px-4 py-2 hover:bg-gray-100 w-full text-left"
+      >
+        {chatNotificationSettings[chat.id] ? (
+          <>
+            <Bell className="w-4 h-4 mr-2" />
+            开启通知
+          </>
+        ) : (
+          <>
+            <BellOff className="w-4 h-4 mr-2" />
+            关闭通知
+          </>
+        )}
+      </button>
+      <button
+        onClick={() => {
+          togglePinChat(chat.id);
+          onClose();
+        }}
+        className="flex items-center px-4 py-2 hover:bg-gray-100 w-full text-left"
+      >
+        <Star className={`w-4 h-4 mr-2 ${chat.pinned ? 'text-yellow-500' : ''}`} />
+        {chat.pinned ? '取消置顶' : '置顶聊天'}
+      </button>
+    </div>
+  );
+};
+
+// 10. 在页面标题栏添加通知中心按钮
+<div className="flex items-center space-x-2">
+  <button
+    onClick={() => setShowNotificationCenter(true)}
+    className="p-2 hover:bg-gray-100 rounded-full relative"
+  >
+    <Bell className="w-5 h-5 text-gray-600" />
+    {notificationHistory.filter(n => !n.read).length > 0 && (
+      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-xs flex items-center justify-center">
+        {notificationHistory.filter(n => !n.read).length}
+      </span>
+    )}
+  </button>
+</div>
+
+// 4. 增强的通知函数
+const showEnhancedNotification = (title, body, options = {}) => {
+  // 检查通知设置
+  if (!notificationSettings.enabled) return;
+  if (isInQuietHours()) return;
+  
+  const {
+    icon = null,
+    onClick = null,
+    type = 'message',
+    priority = 'normal'
+  } = options;
+  
+  // 播放声音
+  if (notificationSettings.sound) {
+    playNotificationSound();
+  }
+  
+  // 振动
+  if (notificationSettings.vibration && 'vibrate' in navigator) {
+    if (priority === 'high') {
+      navigator.vibrate([200, 100, 200, 100, 200]);
+    } else {
+      navigator.vibrate(200);
+    }
+  }
+  
+  // 桌面通知
+  if (notificationSettings.desktop && document.hidden) {
+    showNotification(
+      title,
+      notificationSettings.showPreview ? body : '您有新消息',
+      icon,
+      onClick
+    );
+  }
+  
+  // 应用内通知
+  if (!document.hidden) {
+    showInAppNotification(title, body, type);
+  }
+};
+
+// 5. 更新设置界面（替换原有的设置模态框内容）
+{showSettings && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="bg-white rounded-lg p-6 w-[500px] max-h-[80vh] overflow-y-auto">
+      <h3 className="text-xl font-bold mb-4">设置</h3>
+      
+      <div className="space-y-6">
+        {/* 通知设置部分 */}
+        <div>
+          <h4 className="text-lg font-semibold mb-3 flex items-center">
+            <Bell className="w-5 h-5 mr-2" />
+            通知设置
+          </h4>
+          
+          <div className="space-y-3 pl-7">
+            {/* 主开关 */}
+            <div className="flex items-center justify-between">
+              <span>启用通知</span>
+              <button
+                onClick={() => saveNotificationSettings({
+                  ...notificationSettings,
+                  enabled: !notificationSettings.enabled
+                })}
+                className={`w-12 h-6 rounded-full ${
+                  notificationSettings.enabled ? 'bg-green-500' : 'bg-gray-300'
+                } relative transition-colors`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                  notificationSettings.enabled ? 'translate-x-6' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 声音 */}
+            <div className="flex items-center justify-between">
+              <span>消息提示音</span>
+              <button
+                onClick={() => saveNotificationSettings({
+                  ...notificationSettings,
+                  sound: !notificationSettings.sound
+                })}
+                disabled={!notificationSettings.enabled}
+                className={`w-12 h-6 rounded-full ${
+                  notificationSettings.sound && notificationSettings.enabled 
+                    ? 'bg-green-500' : 'bg-gray-300'
+                } relative transition-colors disabled:opacity-50`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                  notificationSettings.sound ? 'translate-x-6' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 桌面通知 */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span>桌面通知</span>
+                {Notification.permission === 'denied' && (
+                  <p className="text-xs text-red-500">浏览器已拒绝通知权限</p>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  if (Notification.permission === 'default') {
+                    Notification.requestPermission().then(permission => {
+                      if (permission === 'granted') {
+                        saveNotificationSettings({
+                          ...notificationSettings,
+                          desktop: true
+                        });
+                      }
+                    });
+                  } else {
+                    saveNotificationSettings({
+                      ...notificationSettings,
+                      desktop: !notificationSettings.desktop
+                    });
+                  }
+                }}
+                disabled={!notificationSettings.enabled || Notification.permission === 'denied'}
+                className={`w-12 h-6 rounded-full ${
+                  notificationSettings.desktop && notificationSettings.enabled 
+                    ? 'bg-green-500' : 'bg-gray-300'
+                } relative transition-colors disabled:opacity-50`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                  notificationSettings.desktop ? 'translate-x-6' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 震动 */}
+            <div className="flex items-center justify-between">
+              <span>震动提醒</span>
+              <button
+                onClick={() => saveNotificationSettings({
+                  ...notificationSettings,
+                  vibration: !notificationSettings.vibration
+                })}
+                disabled={!notificationSettings.enabled}
+                className={`w-12 h-6 rounded-full ${
+                  notificationSettings.vibration && notificationSettings.enabled 
+                    ? 'bg-green-500' : 'bg-gray-300'
+                } relative transition-colors disabled:opacity-50`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                  notificationSettings.vibration ? 'translate-x-6' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 消息预览 */}
+            <div className="flex items-center justify-between">
+              <span>显示消息预览</span>
+              <button
+                onClick={() => saveNotificationSettings({
+                  ...notificationSettings,
+                  showPreview: !notificationSettings.showPreview
+                })}
+                disabled={!notificationSettings.enabled}
+                className={`w-12 h-6 rounded-full ${
+                  notificationSettings.showPreview && notificationSettings.enabled 
+                    ? 'bg-green-500' : 'bg-gray-300'
+                } relative transition-colors disabled:opacity-50`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                  notificationSettings.showPreview ? 'translate-x-6' : 'translate-x-0.5'
+                }`} />
+              </button>
+            </div>
+            
+            {/* 免打扰时间 */}
+            <div className="border-t pt-3 mt-3">
+              <div className="flex items-center justify-between mb-2">
+                <span>免打扰时间</span>
+                <button
+                  onClick={() => saveNotificationSettings({
+                    ...notificationSettings,
+                    quietHours: {
+                      ...notificationSettings.quietHours,
+                      enabled: !notificationSettings.quietHours.enabled
+                    }
+                  })}
+                  className={`w-12 h-6 rounded-full ${
+                    notificationSettings.quietHours.enabled ? 'bg-green-500' : 'bg-gray-300'
+                  } relative transition-colors`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                    notificationSettings.quietHours.enabled ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+              
+              {notificationSettings.quietHours.enabled && (
+                <div className="flex items-center space-x-2 text-sm">
+                  <input
+                    type="time"
+                    value={notificationSettings.quietHours.start}
+                    onChange={(e) => saveNotificationSettings({
+                      ...notificationSettings,
+                      quietHours: {
+                        ...notificationSettings.quietHours,
+                        start: e.target.value
+                      }
+                    })}
+                    className="px-2 py-1 border rounded"
+                  />
+                  <span>至</span>
+                  <input
+                    type="time"
+                    value={notificationSettings.quietHours.end}
+                    onChange={(e) => saveNotificationSettings({
+                      ...notificationSettings,
+                      quietHours: {
+                        ...notificationSettings.quietHours,
+                        end: e.target.value
+                      }
+                    })}
+                    className="px-2 py-1 border rounded"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* 其他设置 */}
+        <div className="border-t pt-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <Shield className="w-5 h-5 mr-2" />
+              <span>端到端加密</span>
+            </div>
+            <span className="text-green-500 text-sm">已启用</span>
+          </div>
+          
+          <div className="flex items-center justify-between mt-3">
+            <div className="flex items-center">
+              <User className="w-5 h-5 mr-2" />
+              <span>个人资料</span>
+            </div>
+            <button className="text-blue-500 text-sm hover:underline">编辑</button>
+          </div>
+          
+          <div className="pt-4 mt-4 border-t">
+            <button className="text-red-500 text-sm hover:underline">清除聊天记录</button>
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex justify-end mt-6 space-x-2">
+        <button
+          onClick={() => {
+            // 测试通知
+            showEnhancedNotification(
+              '测试通知',
+              '这是一条测试消息',
+              { type: 'info' }
+            );
+          }}
+          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+        >
+          测试通知
+        </button>
+        <button
+          onClick={() => setShowSettings(false)}
+          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+        >
+          关闭
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+
+
   // 置顶聊天
   const togglePinChat = (chatId) => {
     setChats(prev => prev.map(chat => 
@@ -1008,7 +1787,46 @@ const showNotification = (title, body, icon = null) => {
       </div>
     );
   }
-
+  
+  const NotificationContainer = () => (
+  <div className="fixed top-4 right-4 z-50 space-y-2">
+    {inAppNotifications.map(notification => (
+      <div
+        key={notification.id}
+        className="bg-white rounded-lg shadow-lg p-4 min-w-[300px] animate-fadeIn"
+      >
+        <div className="flex items-start">
+          <div className="flex-shrink-0">
+            {notification.type === 'message' && (
+              <MessageCircle className="w-6 h-6 text-green-500" />
+            )}
+            {notification.type === 'info' && (
+              <Bell className="w-6 h-6 text-blue-500" />
+            )}
+          </div>
+          <div className="ml-3 flex-1">
+            <p className="text-sm font-medium text-gray-900">
+              {notification.title}
+            </p>
+            <p className="mt-1 text-sm text-gray-500">
+              {notification.body}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setInAppNotifications(prev => 
+                prev.filter(n => n.id !== notification.id)
+              );
+            }}
+            className="ml-4 flex-shrink-0"
+          >
+            <X className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+);
   // 主界面
   return (
     <div className="flex h-screen bg-gray-100">
