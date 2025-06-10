@@ -19,6 +19,8 @@ const ChatApp = () => {
   const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '', confirmPassword: '' });
   const [activeTab, setActiveTab] = useState('chats');
   const [selectedChat, setSelectedChat] = useState(null);
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState({
     'ai-assistant': [
@@ -98,6 +100,19 @@ const ChatApp = () => {
     }
   ]);
 
+  const scrollToBottom = () => {
+  if (messagesEndRef.current) {
+    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }
+};
+// 3. 在消息更新时自动滚动
+useEffect(() => {
+  // 延迟一下确保 DOM 已更新
+  setTimeout(() => {
+    scrollToBottom();
+  }, 100);
+}, [messages, selectedChat]); // 当消息或选中的聊天变化时滚动
+
   // 更新聊天列表 - 从对话数据生成
   useEffect(() => {
     if (conversations.length > 0) {
@@ -125,6 +140,24 @@ const ChatApp = () => {
       });
     }
   }, [conversations]);
+
+  useEffect(() => {
+  // 请求浏览器通知权限
+  if ('Notification' in window) {
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        console.log('通知权限:', permission);
+        if (permission === 'granted') {
+          // 保存通知设置
+          setNotificationSettings(prev => ({
+            ...prev,
+            desktop: true
+          }));
+        }
+      });
+    }
+  }
+}, []);
 
   // 播放提示音
   const playNotificationSound = () => {
@@ -336,8 +369,8 @@ const showNotification = (title, body, icon = null, onClick = null) => {
         if (selectedChat !== senderId && selectedChat !== messageData.senderId) {
           playNotificationSound();
           
+          
           // 显示浏览器通知
-          const senderName = messageData.sender?.username || '好友';
           showNotification(
             senderName,
             messageData.content,
@@ -518,12 +551,25 @@ const showNotification = (title, body, icon = null, onClick = null) => {
             status: msg.status
           }))
         }));
+        setTimeout(() => {
+        scrollToBottom();
+      }, 100);
       }
     } catch (error) {
       console.error('加载消息失败:', error);
     }
   };
+// 9. 添加一个回到底部的浮动按钮（可选）
+const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
+// 监听滚动，显示/隐藏回到底部按钮
+const handleScroll = () => {
+  if (messagesContainerRef.current) {
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+    setShowScrollToBottom(!isNearBottom);
+  }
+};
   // 登录处理
   const handleLogin = async () => {
     try {
@@ -759,6 +805,11 @@ const showNotification = (title, body, icon = null, onClick = null) => {
       setMessage('');
       setShowEmojiPicker(false);
       setReplyingTo(null);
+
+      // 发送后滚动到底部
+      setTimeout(() => {
+      scrollToBottom();
+    }, 100);
       
       // 如果是AI助手，发送到AI
       if (selectedChat === 'ai-assistant') {
@@ -2327,7 +2378,13 @@ const showEnhancedNotification = (title, body, options = {}) => {
           </div>
 
           {/* 消息区域 */}
-          <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+          <div 
+               ref={messagesContainerRef}
+               className="flex-1 overflow-y-auto p-4 bg-gray-50"
+              onScroll={(e) => {
+            // 可选：添加滚动事件处理，比如加载更多历史消息
+            }}
+            >
             {messages[selectedChat]?.map(msg => (
               <div key={msg.id}>
                 {/* 系统消息 */}
@@ -2482,7 +2539,13 @@ const showEnhancedNotification = (title, body, options = {}) => {
                 </div>
               </div>
             )}
+
+            {/* 添加一个空的 div 作为滚动锚点 */}
+            <div ref={messagesEndRef} />
+
           </div>
+
+          
 
           {/* 输入区域 */}
           <div className="bg-white p-4 border-t border-gray-200">
@@ -2582,6 +2645,11 @@ const showEnhancedNotification = (title, body, options = {}) => {
       )}
     </div>
   );
+
+  
 };
+
+
+
 
 export default ChatApp;
